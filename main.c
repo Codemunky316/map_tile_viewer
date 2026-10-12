@@ -17,6 +17,52 @@
 
 #define MIN_ZOOM_LEVEL 0
 
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//// Asset Allocator
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/// TODO(mike): combine two (potentially more) Slab allocators,
+/// each with their fixed slab size but one for small slabs, one for big slabs.
+/// each with their own free lists (TODO)
+/// each growable with realloc. this means direct pointers are NOT STABLE AND OUGHT NOT TO BE USED
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/// TODO(mike): slab sizes will likely need rightsizing
+#define SMALL_SLAB_SIZE 4096 // 4KiB
+#define LARGE_SLAB_SIZE 2048ß // 20KiB
+
+// TODO(mike): free list
+typedef struct {
+    char *memory;
+    const size_t slab_size;
+    size_t slab_count;
+    size_t slab_offset;
+    size_t slab_capacity;
+} SlabAllocator;
+
+typedef struct {
+    // TODO(mike): maybe variable number of allocators? No, not VLAs. VLAs are bad.
+    SlabAllocator allocators[2];
+} AssetAllocator;
+
+typedef struct {
+    size_t idx_allocator;
+    size_t offset;
+    size_t size;
+} AssetAllocation;
+
+// Note(mike): might be useful for TextureAtlas, might be wasted effort, we'll see
+typedef struct {
+    size_t *idx_allocators;
+    size_t *offsets;
+    size_t *sizes;
+    size_t len;
+    size_t cap;
+} AssetAllocationSOA;
+
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/// main program
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 int main(void) {
 
     CURL *curl_handle;
@@ -34,7 +80,7 @@ int main(void) {
     }
 
     // TODO(mike): we'll need to use async stuff later but for lower zoom levels blocking will be fine
-    curl_easy_setopt(curl_handle, CURLOPT_URL, "https://tile.openstreetmap.org/0/0/0.png");
+    curl_easy_setopt(curl_handle, CURLOPT_URL, "https://tile.openstreetmap.org/1/0/0.png");
     curl_easy_setopt(curl_handle, CURLOPT_FOLLOWLOCATION, 1L);
     curl_easy_setopt(curl_handle, CURLOPT_WRITEFUNCTION, WriteMemoryCallback);
     curl_easy_setopt(curl_handle, CURLOPT_WRITEDATA, (void *)&chunk);
@@ -43,10 +89,42 @@ int main(void) {
     res = curl_easy_perform(curl_handle);
     if(res != CURLE_OK) {
         fprintf(stderr, "error: %s\n", curl_easy_strerror(res));
-    } else {
-        printf("Size: %lu\n", (unsigned long)chunk.size);
-        printf("Data: %s\n", chunk.memory);
+        return 1;
     }
+
+    struct MemoryStruct chunk2;
+    chunk2.memory = malloc(1);
+    chunk2.size = 0;
+    curl_easy_setopt(curl_handle, CURLOPT_URL, "https://tile.openstreetmap.org/1/0/1.png");
+    curl_easy_setopt(curl_handle, CURLOPT_WRITEDATA, (void *)&chunk2);
+    res = curl_easy_perform(curl_handle);
+    if(res != CURLE_OK) {
+        fprintf(stderr, "error: %s\n", curl_easy_strerror(res));
+        return 1;
+    }
+
+    struct MemoryStruct chunk3;
+    chunk3.memory = malloc(1);
+    chunk3.size = 0;
+    curl_easy_setopt(curl_handle, CURLOPT_URL, "https://tile.openstreetmap.org/1/1/0.png");
+    curl_easy_setopt(curl_handle, CURLOPT_WRITEDATA, (void *)&chunk3);
+    res = curl_easy_perform(curl_handle);
+    if(res != CURLE_OK) {
+        fprintf(stderr, "error: %s\n", curl_easy_strerror(res));
+        return 1;
+    }
+
+    struct MemoryStruct chunk4;
+    chunk4.memory = malloc(1);
+    chunk4.size = 0;
+    curl_easy_setopt(curl_handle, CURLOPT_URL, "https://tile.openstreetmap.org/1/1/1.png");
+    curl_easy_setopt(curl_handle, CURLOPT_WRITEDATA, (void *)&chunk4);
+    res = curl_easy_perform(curl_handle);
+    if(res != CURLE_OK) {
+        fprintf(stderr, "error: %s\n", curl_easy_strerror(res));
+        return 1;
+    }
+
 
 
     int total_tiles_per_axis;
@@ -66,6 +144,12 @@ int main(void) {
     // TODO(mike): do it naively first, loading texture for each tile
     Image img = LoadImageFromMemory(".png", (const unsigned char*) chunk.memory, (int) chunk.size);
     Texture2D texture = LoadTextureFromImage(img);
+    Image img2 = LoadImageFromMemory(".png", (const unsigned char*) chunk2.memory, (int) chunk2.size);
+    Texture2D texture2 = LoadTextureFromImage(img2);
+    Image img3 = LoadImageFromMemory(".png", (const unsigned char*) chunk3.memory, (int) chunk3.size);
+    Texture2D texture3 = LoadTextureFromImage(img3);
+    Image img4 = LoadImageFromMemory(".png", (const unsigned char*) chunk4.memory, (int) chunk4.size);
+    Texture2D texture4 = LoadTextureFromImage(img4);
 
     while (!WindowShouldClose()) {
         // TODO(mike): read input i.e. mouse movements, scrolling
@@ -79,16 +163,28 @@ int main(void) {
         ClearBackground(RAYWHITE);
 
         // Draw texture centered on screen
+        // DrawTexture(texture,
+        //     GetScreenWidth() / 2 - texture.width / 2,
+        //     GetScreenHeight() / 2 - texture.height / 2,
+        //     WHITE);
+
         DrawTexture(texture,
-            GetScreenWidth() / 2 - texture.width / 2,
-            GetScreenHeight() / 2 - texture.height / 2,
+            0,0,
+            WHITE);
+        DrawTexture(texture2,
+            0,img2.height,
+            WHITE);
+        DrawTexture(texture3,
+            img3.width,0,
+            WHITE);
+        DrawTexture(texture4,
+            img3.width,img.height,
             WHITE);
 
         EndDrawing();
     }
 
     curl_easy_cleanup(curl_handle);
-    free(chunk.memory);
 
     return 0;
 }
