@@ -145,6 +145,7 @@ aa_allocate_asset(AssetAllocator *allocator, const size_t size) {
 
     allocator->allocators[idx_allocator].slab_offset += number_of_slabs;
 
+    // TODO(mike): offset needs to be actual pointer offset. not just slab offset.
     return (AssetAllocation) {
         .idx_allocator =  idx_allocator,
         .offset = offset,
