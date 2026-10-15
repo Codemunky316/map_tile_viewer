@@ -28,13 +28,12 @@
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /// TODO(mike): slab sizes will likely need rightsizing
 #define SMALL_SLAB_SIZE 4096 // 4KiB
-#define LARGE_SLAB_SIZE 2048ß // 20KiB
+#define LARGE_SLAB_SIZE 20480 // 20KiB
 
 // TODO(mike): free list
 typedef struct {
     char *memory;
     const size_t slab_size;
-    size_t slab_count;
     size_t slab_offset;
     size_t slab_capacity;
 } SlabAllocator;
@@ -58,6 +57,54 @@ typedef struct {
     size_t len;
     size_t cap;
 } AssetAllocationSOA;
+
+AssetAllocator
+aa_create_asset_allocator() {
+    // TODO(mike): allocation error handling; ignore for now
+
+    // small slab allocator
+    size_t small_slab_capacity = 100;
+    char *small_slab_memory = malloc(SMALL_SLAB_SIZE * small_slab_capacity);
+    memset(small_slab_memory, 0, SMALL_SLAB_SIZE * small_slab_capacity);
+
+    // large slab allocator
+    size_t large_slab_capacity = 100;
+    char *large_slab_memory = malloc(LARGE_SLAB_SIZE * large_slab_capacity);
+    memset(large_slab_memory, 0, LARGE_SLAB_SIZE * large_slab_capacity);
+
+    return (AssetAllocator) {
+        .allocators = {
+        {
+            .memory = small_slab_memory,
+            .slab_size = SMALL_SLAB_SIZE,
+            .slab_offset = 0,
+            .slab_capacity = small_slab_capacity,
+            },
+        {
+            .memory = large_slab_memory,
+            .slab_size = LARGE_SLAB_SIZE,
+            .slab_offset = 0,
+            .slab_capacity = large_slab_capacity,
+            }
+        }
+    };
+}
+
+void
+aa_destroy_asset_allocator(AssetAllocator *allocator) {
+    allocator->allocators[0].slab_capacity = 0;
+    allocator->allocators[0].slab_offset = 0;
+    free(allocator->allocators[0].memory);
+    allocator->allocators[0].memory = NULL;
+
+    allocator->allocators[1].slab_capacity = 0;
+    allocator->allocators[1].slab_offset = 0;
+    free(allocator->allocators[1].memory);
+    allocator->allocators[1].memory = NULL;
+}
+
+
+
 
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
