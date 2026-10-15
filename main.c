@@ -44,9 +44,9 @@ typedef struct {
 } AssetAllocator;
 
 typedef struct {
-    size_t idx_allocator;
-    size_t offset;
-    size_t size;
+    const size_t idx_allocator;
+    const size_t offset;
+    const size_t size;
 } AssetAllocation;
 
 // Note(mike): might be useful for TextureAtlas, might be wasted effort, we'll see
@@ -103,6 +103,54 @@ aa_destroy_asset_allocator(AssetAllocator *allocator) {
     allocator->allocators[1].memory = NULL;
 }
 
+AssetAllocation
+aa_allocate_asset(AssetAllocator *allocator, const size_t size) {
+    // TODO(mike): need to check alignment?
+
+    // we allocate up to 4 slabs in the small one, otherwise the large one
+    // TODO(mike): this will likely get fine-tuned later
+    int idx_allocator;
+    if (size / SMALL_SLAB_SIZE <= 4) {
+        idx_allocator = 0;
+    } else {
+        idx_allocator = 1;
+    }
+
+    // TODO(mike): we'll need a free list per allocator once we want to unload some images
+
+    // TODO(mike): bit more fine-grained care maybe
+    const size_t number_of_slabs = size / SMALL_SLAB_SIZE + 1;
+
+    int need_realloc = 0;
+    while ((allocator->allocators[idx_allocator].slab_offset + number_of_slabs)
+            >= allocator->allocators[idx_allocator].slab_capacity) {
+        need_realloc = 1;
+        // TODO(mike): doubling might be a tad aggressive
+        allocator->allocators[idx_allocator].slab_capacity *= 2;
+    }
+
+    if (need_realloc) {
+        char *new_memory = realloc(
+            allocator->allocators[idx_allocator].memory,
+            allocator->allocators[idx_allocator].slab_capacity * allocator->allocators[idx_allocator].slab_size);
+       if (new_memory == NULL) {
+           // TODO(mike): better error handling!
+           fprintf(stderr, "realloc() failed\n");
+           exit(-1);
+       }
+        allocator->allocators[idx_allocator].memory = new_memory;
+    }
+
+    const size_t offset = allocator->allocators[idx_allocator].slab_offset;
+
+    allocator->allocators[idx_allocator].slab_offset += number_of_slabs;
+
+    return (AssetAllocation) {
+        .idx_allocator =  idx_allocator,
+        .offset = offset,
+        .size = size,
+    };
+}
 
 
 
