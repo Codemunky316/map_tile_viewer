@@ -44,9 +44,9 @@ typedef struct {
 } AssetAllocator;
 
 typedef struct {
-    const size_t idx_allocator;
-    const size_t offset;
-    const size_t size;
+    size_t idx_allocator;
+    size_t offset;
+    size_t size;
 } AssetAllocation;
 
 // Note(mike): might be useful for TextureAtlas, might be wasted effort, we'll see
@@ -141,11 +141,10 @@ aa_allocate_asset(AssetAllocator *allocator, const size_t size) {
         allocator->allocators[idx_allocator].memory = new_memory;
     }
 
-    const size_t offset = allocator->allocators[idx_allocator].slab_offset;
+    const size_t offset = allocator->allocators[idx_allocator].slab_offset * allocator->allocators[idx_allocator].slab_size;
 
     allocator->allocators[idx_allocator].slab_offset += number_of_slabs;
 
-    // TODO(mike): offset needs to be actual pointer offset. not just slab offset.
     return (AssetAllocation) {
         .idx_allocator =  idx_allocator,
         .offset = offset,
@@ -153,7 +152,71 @@ aa_allocate_asset(AssetAllocator *allocator, const size_t size) {
     };
 }
 
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/// scratch buffer
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+typedef struct {
+    char *memory;
+    size_t len;
+    size_t cap;
+} ScratchBuffer;
 
+size_t
+scratch_buffer_append(ScratchBuffer *buffer, void *content, size_t size) {
+    int realloc_needed = 0;
+    if (buffer->cap == 0) {
+        realloc_needed = 1;
+        // TODO(mike): maybe different size cap constant to not mix these two
+        buffer->cap = SMALL_SLAB_SIZE;
+    }
+    while (buffer->len + size >= buffer->cap) {
+        realloc_needed = 1;
+        buffer->cap *= 2;
+    }
+
+    if (realloc_needed) {
+        char *new_memory = realloc(buffer->memory, buffer->cap);
+        if (new_memory == NULL) {
+            fprintf(stderr, "realloc() failed\n");
+            return -1;
+        }
+        buffer->memory = new_memory;
+    }
+    for (size_t i = 0; i < size; ++i) {
+        buffer->memory[buffer->len++] = ((char*)content)[i];
+    }
+    // TODO(mike): i need to be sure about my API...
+    return size;
+}
+
+void
+scratch_buffer_reset(ScratchBuffer *buffer) {
+    buffer->len = 0;
+}
+
+void
+scratch_buffer_destroy(ScratchBuffer *buffer) {
+    free(buffer->memory);
+    buffer->memory = NULL;
+    buffer->len = 0;
+    buffer->cap = 0;
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/// http client stuff
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+///
+// memory callback is called in chunks! i need a scratch arena for the memory
+size_t
+CURLWriteMemoryCallback(void *contents, size_t size, size_t nmemb, void *userp) {
+    size_t realsize = size * nmemb;
+
+    ScratchBuffer *buffer = (ScratchBuffer *)userp;
+
+    scratch_buffer_append(buffer, contents, realsize);
+
+    return realsize;
+}
 
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -161,12 +224,12 @@ aa_allocate_asset(AssetAllocator *allocator, const size_t size) {
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 int main(void) {
 
+    // main allocator
+    AssetAllocator asset_allocator = aa_create_asset_allocator();
+
     CURL *curl_handle;
     CURLcode res;
-
-    struct MemoryStruct chunk;
-    chunk.memory = malloc(1);
-    chunk.size = 0;
+    ScratchBuffer buffer = {};
 
     curl_handle = curl_easy_init();
     if (!curl_handle) {
@@ -178,8 +241,8 @@ int main(void) {
     // TODO(mike): we'll need to use async stuff later but for lower zoom levels blocking will be fine
     curl_easy_setopt(curl_handle, CURLOPT_URL, "https://tile.openstreetmap.org/1/0/0.png");
     curl_easy_setopt(curl_handle, CURLOPT_FOLLOWLOCATION, 1L);
-    curl_easy_setopt(curl_handle, CURLOPT_WRITEFUNCTION, WriteMemoryCallback);
-    curl_easy_setopt(curl_handle, CURLOPT_WRITEDATA, (void *)&chunk);
+    curl_easy_setopt(curl_handle, CURLOPT_WRITEFUNCTION, CURLWriteMemoryCallback);
+    curl_easy_setopt(curl_handle, CURLOPT_WRITEDATA, (void *)&buffer);
     curl_easy_setopt(curl_handle, CURLOPT_USERAGENT, "libcurl-agent/1.0");
 
     res = curl_easy_perform(curl_handle);
@@ -188,38 +251,43 @@ int main(void) {
         return 1;
     }
 
-    struct MemoryStruct chunk2;
-    chunk2.memory = malloc(1);
-    chunk2.size = 0;
+    AssetAllocation data1 = aa_allocate_asset(&asset_allocator, buffer.len);
+    memcpy(asset_allocator.allocators[data1.idx_allocator].memory + data1.offset, buffer.memory, buffer.len);
+    scratch_buffer_reset(&buffer);
+
     curl_easy_setopt(curl_handle, CURLOPT_URL, "https://tile.openstreetmap.org/1/0/1.png");
-    curl_easy_setopt(curl_handle, CURLOPT_WRITEDATA, (void *)&chunk2);
+    curl_easy_setopt(curl_handle, CURLOPT_WRITEDATA, (void *)&buffer);
     res = curl_easy_perform(curl_handle);
     if(res != CURLE_OK) {
         fprintf(stderr, "error: %s\n", curl_easy_strerror(res));
         return 1;
     }
+    AssetAllocation data2 = aa_allocate_asset(&asset_allocator, buffer.len);
+    memcpy(asset_allocator.allocators[data2.idx_allocator].memory + data2.offset, buffer.memory, buffer.len);
+    scratch_buffer_reset(&buffer);
 
-    struct MemoryStruct chunk3;
-    chunk3.memory = malloc(1);
-    chunk3.size = 0;
     curl_easy_setopt(curl_handle, CURLOPT_URL, "https://tile.openstreetmap.org/1/1/0.png");
-    curl_easy_setopt(curl_handle, CURLOPT_WRITEDATA, (void *)&chunk3);
+    curl_easy_setopt(curl_handle, CURLOPT_WRITEDATA, (void *)&buffer);
     res = curl_easy_perform(curl_handle);
     if(res != CURLE_OK) {
         fprintf(stderr, "error: %s\n", curl_easy_strerror(res));
         return 1;
     }
+    AssetAllocation data3 = aa_allocate_asset(&asset_allocator, buffer.len);
+    memcpy(asset_allocator.allocators[data3.idx_allocator].memory + data3.offset, buffer.memory, buffer.len);
+    scratch_buffer_reset(&buffer);
 
-    struct MemoryStruct chunk4;
-    chunk4.memory = malloc(1);
-    chunk4.size = 0;
+
     curl_easy_setopt(curl_handle, CURLOPT_URL, "https://tile.openstreetmap.org/1/1/1.png");
-    curl_easy_setopt(curl_handle, CURLOPT_WRITEDATA, (void *)&chunk4);
+    curl_easy_setopt(curl_handle, CURLOPT_WRITEDATA, (void *)&buffer);
     res = curl_easy_perform(curl_handle);
     if(res != CURLE_OK) {
         fprintf(stderr, "error: %s\n", curl_easy_strerror(res));
         return 1;
     }
+    AssetAllocation data4 = aa_allocate_asset(&asset_allocator, buffer.len);
+    memcpy(asset_allocator.allocators[data4.idx_allocator].memory + data4.offset, buffer.memory, buffer.len);
+    scratch_buffer_reset(&buffer);
 
 
 
@@ -238,13 +306,21 @@ int main(void) {
     SetTargetFPS(60);
 
     // TODO(mike): do it naively first, loading texture for each tile
-    Image img = LoadImageFromMemory(".png", (const unsigned char*) chunk.memory, (int) chunk.size);
+    // TODO(mike): function to read memory from allocation more easily
+    const unsigned char *memory1 = (const unsigned char *) asset_allocator.allocators[data1.idx_allocator].memory + data1.offset;
+    Image img = LoadImageFromMemory(".png", memory1, (int) data1.size);
     Texture2D texture = LoadTextureFromImage(img);
-    Image img2 = LoadImageFromMemory(".png", (const unsigned char*) chunk2.memory, (int) chunk2.size);
+
+    const unsigned char *memory2 = (const unsigned char *) asset_allocator.allocators[data2.idx_allocator].memory + data2.offset;
+    Image img2 = LoadImageFromMemory(".png", memory2, (int) data2.size);
     Texture2D texture2 = LoadTextureFromImage(img2);
-    Image img3 = LoadImageFromMemory(".png", (const unsigned char*) chunk3.memory, (int) chunk3.size);
+
+    const unsigned char *memory3 = (const unsigned char *) asset_allocator.allocators[data3.idx_allocator].memory + data3.offset;
+    Image img3 = LoadImageFromMemory(".png", memory3, (int) data3.size);
     Texture2D texture3 = LoadTextureFromImage(img3);
-    Image img4 = LoadImageFromMemory(".png", (const unsigned char*) chunk4.memory, (int) chunk4.size);
+
+    const unsigned char *memory4 = (const unsigned char *) asset_allocator.allocators[data4.idx_allocator].memory + data4.offset;
+    Image img4 = LoadImageFromMemory(".png", memory4, (int) data4.size);
     Texture2D texture4 = LoadTextureFromImage(img4);
 
     while (!WindowShouldClose()) {
