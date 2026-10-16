@@ -2,7 +2,7 @@
 #include <raylib.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include "util.h"
+#include <string.h>
 
 // https://tile.openstreetmap.org/{z}/{x}/{y}.png
 #define TILES_URL_TEMPLATE "https://tile.openstreetmap.org/{%d}/{%d}/{%d}.png"
