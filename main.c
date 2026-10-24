@@ -3,6 +3,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <math.h>
+#include <assert.h>
 
 // https://tile.openstreetmap.org/{z}/{x}/{y}.png
 #define TILES_URL_TEMPLATE "https://tile.openstreetmap.org/{%d}/{%d}/{%d}.png"
@@ -16,6 +18,45 @@
 #define MAX_ZOOM_LEVEL 4
 
 #define MIN_ZOOM_LEVEL 0
+
+// Note(mike): OpenStreetMap Raster tiles are 256 x 256 pixels
+#define TILE_PIXELS_X 256
+#define TILE_PIXELS_Y 256
+
+// Note(mike): we assume 4 bytes TODO(mike): this might need to be flexible in the future
+#define BYTES_PER_PIXEL 4
+
+#define CURSOR_SPEED_X 100
+#define CURSOR_SPEED_Y 100
+
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/// GIS
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+typedef struct {
+    int x_min;
+    int x_max;
+    int y_min;
+    int y_max;
+} TileRange;
+
+TileRange
+gis_visible_tiles(double center_x, double center_y, int viewport_width, int viewport_height) {
+    double left   = center_x - viewport_width  / 2.0;
+    double right  = center_x + viewport_width  / 2.0;
+    double top    = center_y - viewport_height / 2.0;
+    double bottom = center_y + viewport_height / 2.0;
+
+    TileRange r = {
+        .x_min = (int)floor(left / TILE_PIXELS_X),
+        .x_max = (int)floor((right - 1.0) / TILE_PIXELS_X),
+        .y_min = (int)floor(top / TILE_PIXELS_Y),
+        .y_max = (int)floor((bottom - 1.0) / TILE_PIXELS_Y)
+    };
+
+    return r;
+
+}
 
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -290,17 +331,16 @@ int main(void) {
     scratch_buffer_reset(&buffer);
 
 
-
     int total_tiles_per_axis;
 
-    int x_tiles_per_axis;
-    int y_tiles_per_axis;
+    const int x_tiles = (int) (floor((double)GetScreenWidth() / TILE_PIXELS_X));
+    const int y_tiles = (int) floor((double)GetScreenHeight() / TILE_PIXELS_Y);
 
     // NOTE(mike): we render the hard-coded zoom level first, then we go in
     int zoom_level = 2;
 
-    int x = 0;
-    int y = 0;
+    double center_x = 0;
+    double center_y = 0;
 
     InitWindow(WINDOW_WIDTH, WINDOW_HEIGHT, "Mappy McMapface");
     SetTargetFPS(60);
@@ -323,35 +363,173 @@ int main(void) {
     Image img4 = LoadImageFromMemory(".png", memory4, (int) data4.size);
     Texture2D texture4 = LoadTextureFromImage(img4);
 
+    // TODO(mike): test combining images
+    Image combinedImage = {};
+    char *combined_image_data = malloc(WINDOW_HEIGHT * WINDOW_WIDTH * BYTES_PER_PIXEL);
+    assert(combined_image_data && "malloc combined failed");
+
+    combinedImage.width = 2 * TILE_PIXELS_X;
+    combinedImage.height = 2 * TILE_PIXELS_Y;
+
+    // try with framebuffer
+    RenderTexture2D texture_buffer = LoadRenderTexture(GetScreenWidth(), GetScreenHeight());
+
+    // Note(mike): we draw to texture first, then we render the texture to the screen
+    BeginTextureMode(texture_buffer);
+
+    // TODO(mike): handle rotation
+    // top left
+    DrawTexture(texture,
+        GetScreenWidth() / 2 - TILE_PIXELS_X,GetScreenHeight() / 2 - TILE_PIXELS_Y,
+        WHITE);
+    // bottom left
+    DrawTexture(texture2,
+        GetScreenWidth() / 2 - TILE_PIXELS_X,GetScreenHeight() / 2,
+        WHITE);
+    // top right
+    DrawTexture(texture3,
+        GetScreenWidth() / 2,GetScreenHeight() / 2 - TILE_PIXELS_Y,
+        WHITE);
+    // bottom right
+    DrawTexture(texture4,
+    GetScreenWidth() / 2,GetScreenHeight() / 2,
+        WHITE);
+
+    EndTextureMode();
+
     while (!WindowShouldClose()) {
-        // TODO(mike): read input i.e. mouse movements, scrolling
+        // TODO(mike): read input i.e. mouse movements, scrolling, but first make it work with wasd and arrow keys
+
+        float speed_x = 0;
+        float speed_y = 0;
+        float dt = GetFrameTime();
+
+        ////////////////////////////////////////
+        /// inputs
+        ////////////////////////////////////////
+        if (IsKeyDown(KEY_A)) {
+            speed_x = -CURSOR_SPEED_X * dt;
+        }
+        if (IsKeyDown(KEY_D)) {
+            speed_x = CURSOR_SPEED_X * dt;
+        }
+        if (IsKeyDown(KEY_W)) {
+           speed_y = -CURSOR_SPEED_Y * dt;
+        }
+        if (IsKeyDown(KEY_S)) {
+            speed_y = CURSOR_SPEED_Y * dt;
+        }
+
+        ////////////////////////////////////////
+        /// update cursor position
+        ////////////////////////////////////////
+        center_x += speed_x;
+        center_y += speed_y;
 
         total_tiles_per_axis = 2 << zoom_level;
 
+        ////////////////////////////////////////
+        /// drawing
+        ////////////////////////////////////////
 
-        // TODO(mike): display the entire world first. later we will work on appropriate tiles per zoom_level for the viewport
-
+        // Now we draw to the screen
         BeginDrawing();
         ClearBackground(RAYWHITE);
 
         // Draw texture centered on screen
-        // DrawTexture(texture,
-        //     GetScreenWidth() / 2 - texture.width / 2,
-        //     GetScreenHeight() / 2 - texture.height / 2,
-        //     WHITE);
 
-        DrawTexture(texture,
-            0,0,
-            WHITE);
-        DrawTexture(texture2,
-            0,img2.height,
-            WHITE);
-        DrawTexture(texture3,
-            img3.width,0,
-            WHITE);
-        DrawTexture(texture4,
-            img3.width,img.height,
-            WHITE);
+        //DrawTexture(texture_buffer.texture,
+        //GetScreenWidth() / 2 - texture.width / 2,
+        //GetScreenHeight() / 2 - texture.height / 2,
+        //WHITE
+        //);
+
+        DrawTextureRec(
+            texture_buffer.texture,
+            (Rectangle) {
+                GetScreenWidth() / 2 - TILE_PIXELS_X + center_x,
+                GetScreenHeight() / 2 - TILE_PIXELS_Y + center_y,
+                TILE_PIXELS_X,
+                TILE_PIXELS_Y
+            },
+            (Vector2) {
+                GetScreenWidth() / 2 - texture.width /2,
+                GetScreenHeight() / 2 - texture.height /2,
+            },
+            RAYWHITE
+            );
+
+
+
+        // horizontal middle line
+        DrawLine(
+            0,
+            GetScreenHeight() / 2,
+            GetScreenWidth(),
+            GetScreenHeight() /2,
+            BLACK
+            );
+
+        // vertical middle line
+        DrawLine(
+            GetScreenWidth() / 2,
+            0,
+            GetScreenWidth() / 2,
+            GetScreenHeight(),
+            BLACK
+            );
+
+        // middle point
+        DrawCircle(
+            GetScreenWidth() / 2,
+            GetScreenHeight() / 2,
+            5.0f,
+            BLACK
+            );
+
+        /// draw vertical and horizontal line around tiles
+
+        // center to left
+        for (int x = GetScreenWidth() / 2 - TILE_PIXELS_X; x > 0; x -= TILE_PIXELS_X) {
+            DrawLine(
+                x,
+                0,
+                x,
+                GetScreenHeight(),
+                BLACK
+                );
+        }
+        // center to right
+        for (int x = GetScreenWidth() / 2 + TILE_PIXELS_X; x < GetScreenWidth(); x += TILE_PIXELS_X) {
+            DrawLine(
+                x,
+                0,
+                x,
+                GetScreenHeight(),
+                BLACK
+                );
+        }
+
+        // center up
+        for (int y = GetScreenHeight() / 2 - TILE_PIXELS_Y; y > 0; y -= TILE_PIXELS_Y) {
+            DrawLine(
+                0,
+                y,
+                GetScreenWidth(),
+                y,
+                BLACK);
+        }
+
+        // center down
+        for (int y = GetScreenHeight() / 2 + TILE_PIXELS_Y; y < GetScreenHeight(); y += TILE_PIXELS_Y) {
+            DrawLine(
+                0,
+                y,
+                GetScreenWidth(),
+                y,
+                BLACK);
+        }
+
 
         EndDrawing();
     }
