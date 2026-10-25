@@ -7,7 +7,8 @@
 #include <assert.h>
 
 // https://tile.openstreetmap.org/{z}/{x}/{y}.png
-#define TILES_URL_TEMPLATE "https://tile.openstreetmap.org/{%d}/{%d}/{%d}.png"
+// #define TILES_URL_TEMPLATE "https://tile.openstreetmap.org/%d/%d/%d.png"
+#define TILES_URL_TEMPLATE "http://localhost:8080/%d/%d/%d.png"
 
 #define WINDOW_WIDTH 1024
 #define WINDOW_HEIGHT 768
@@ -22,6 +23,9 @@
 // Note(mike): OpenStreetMap Raster tiles are 256 x 256 pixels
 #define TILE_PIXELS_X 256
 #define TILE_PIXELS_Y 256
+
+#define TILES_X 10
+#define TILES_Y 10
 
 // Note(mike): we assume 4 bytes TODO(mike): this might need to be flexible in the future
 #define BYTES_PER_PIXEL 4
@@ -244,6 +248,56 @@ scratch_buffer_destroy(ScratchBuffer *buffer) {
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/// texture SOA
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+typedef struct {
+    size_t *idx_allocators;
+    size_t *offsets;
+    size_t *sizes;
+    Image *images;
+    Texture *textures;
+    size_t len;
+} TextureSOA;
+
+TextureSOA
+TextureSOA_create(const size_t len) {
+    size_t *idx_allocators = calloc(1, sizeof(size_t) * len);
+    size_t *offsets = calloc(1, sizeof(size_t) * len);
+    size_t *sizes = calloc(1,sizeof(size_t) * len);
+    Image *images = calloc(1,sizeof(Image) * len);
+    Texture *textures = calloc(1,sizeof(Texture) * len);
+
+    return (TextureSOA) {
+    .idx_allocators = idx_allocators,
+    .offsets = offsets,
+    .sizes = sizes,
+    .images = images,
+    .textures = textures,
+    .len = len,
+    };
+}
+
+void
+TextureSOA_destroy(TextureSOA *soa) {
+    for (size_t i = 0; i < soa->len; ++i) {
+        UnloadImage(soa->images[i]);
+        UnloadTexture(soa->textures[i]);
+    }
+    free(soa->images);
+    free(soa->textures);
+    free(soa->idx_allocators);
+    free(soa->offsets);
+    free(soa->sizes);
+
+    soa->images = NULL;
+    soa->textures = NULL;
+    soa->idx_allocators = NULL;
+    soa->offsets = NULL;
+    soa->sizes = NULL;
+    soa->len = 0;
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /// http client stuff
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 ///
@@ -279,97 +333,11 @@ int main(void) {
         return 1;
     }
 
-    // TODO(mike): we'll need to use async stuff later but for lower zoom levels blocking will be fine
-    curl_easy_setopt(curl_handle, CURLOPT_URL, "https://tile.openstreetmap.org/1/0/0.png");
-    curl_easy_setopt(curl_handle, CURLOPT_FOLLOWLOCATION, 1L);
-    curl_easy_setopt(curl_handle, CURLOPT_WRITEFUNCTION, CURLWriteMemoryCallback);
-    curl_easy_setopt(curl_handle, CURLOPT_WRITEDATA, (void *)&buffer);
-    curl_easy_setopt(curl_handle, CURLOPT_USERAGENT, "libcurl-agent/1.0");
-
-    res = curl_easy_perform(curl_handle);
-    if(res != CURLE_OK) {
-        fprintf(stderr, "error: %s\n", curl_easy_strerror(res));
-        return 1;
-    }
-
-    AssetAllocation data1 = aa_allocate_asset(&asset_allocator, buffer.len);
-    memcpy(asset_allocator.allocators[data1.idx_allocator].memory + data1.offset, buffer.memory, buffer.len);
-    scratch_buffer_reset(&buffer);
-
-    curl_easy_setopt(curl_handle, CURLOPT_URL, "https://tile.openstreetmap.org/1/0/1.png");
-    curl_easy_setopt(curl_handle, CURLOPT_WRITEDATA, (void *)&buffer);
-    res = curl_easy_perform(curl_handle);
-    if(res != CURLE_OK) {
-        fprintf(stderr, "error: %s\n", curl_easy_strerror(res));
-        return 1;
-    }
-    AssetAllocation data2 = aa_allocate_asset(&asset_allocator, buffer.len);
-    memcpy(asset_allocator.allocators[data2.idx_allocator].memory + data2.offset, buffer.memory, buffer.len);
-    scratch_buffer_reset(&buffer);
-
-    curl_easy_setopt(curl_handle, CURLOPT_URL, "https://tile.openstreetmap.org/1/1/0.png");
-    curl_easy_setopt(curl_handle, CURLOPT_WRITEDATA, (void *)&buffer);
-    res = curl_easy_perform(curl_handle);
-    if(res != CURLE_OK) {
-        fprintf(stderr, "error: %s\n", curl_easy_strerror(res));
-        return 1;
-    }
-    AssetAllocation data3 = aa_allocate_asset(&asset_allocator, buffer.len);
-    memcpy(asset_allocator.allocators[data3.idx_allocator].memory + data3.offset, buffer.memory, buffer.len);
-    scratch_buffer_reset(&buffer);
-
-
-    curl_easy_setopt(curl_handle, CURLOPT_URL, "https://tile.openstreetmap.org/1/1/1.png");
-    curl_easy_setopt(curl_handle, CURLOPT_WRITEDATA, (void *)&buffer);
-    res = curl_easy_perform(curl_handle);
-    if(res != CURLE_OK) {
-        fprintf(stderr, "error: %s\n", curl_easy_strerror(res));
-        return 1;
-    }
-    AssetAllocation data4 = aa_allocate_asset(&asset_allocator, buffer.len);
-    memcpy(asset_allocator.allocators[data4.idx_allocator].memory + data4.offset, buffer.memory, buffer.len);
-    scratch_buffer_reset(&buffer);
-
-
-    int total_tiles_per_axis;
-
-    const int x_tiles = (int) (floor((double)GetScreenWidth() / TILE_PIXELS_X));
-    const int y_tiles = (int) floor((double)GetScreenHeight() / TILE_PIXELS_Y);
-
-    // NOTE(mike): we render the hard-coded zoom level first, then we go in
-    int zoom_level = 2;
-
     double center_x = 0;
     double center_y = 0;
 
     InitWindow(WINDOW_WIDTH, WINDOW_HEIGHT, "Mappy McMapface");
     SetTargetFPS(60);
-
-    // TODO(mike): do it naively first, loading texture for each tile
-    // TODO(mike): function to read memory from allocation more easily
-    const unsigned char *memory1 = (const unsigned char *) asset_allocator.allocators[data1.idx_allocator].memory + data1.offset;
-    Image img = LoadImageFromMemory(".png", memory1, (int) data1.size);
-    Texture2D texture = LoadTextureFromImage(img);
-
-    const unsigned char *memory2 = (const unsigned char *) asset_allocator.allocators[data2.idx_allocator].memory + data2.offset;
-    Image img2 = LoadImageFromMemory(".png", memory2, (int) data2.size);
-    Texture2D texture2 = LoadTextureFromImage(img2);
-
-    const unsigned char *memory3 = (const unsigned char *) asset_allocator.allocators[data3.idx_allocator].memory + data3.offset;
-    Image img3 = LoadImageFromMemory(".png", memory3, (int) data3.size);
-    Texture2D texture3 = LoadTextureFromImage(img3);
-
-    const unsigned char *memory4 = (const unsigned char *) asset_allocator.allocators[data4.idx_allocator].memory + data4.offset;
-    Image img4 = LoadImageFromMemory(".png", memory4, (int) data4.size);
-    Texture2D texture4 = LoadTextureFromImage(img4);
-
-    // TODO(mike): test combining images
-    Image combinedImage = {};
-    char *combined_image_data = malloc(WINDOW_HEIGHT * WINDOW_WIDTH * BYTES_PER_PIXEL);
-    assert(combined_image_data && "malloc combined failed");
-
-    combinedImage.width = 2 * TILE_PIXELS_X;
-    combinedImage.height = 2 * TILE_PIXELS_Y;
 
     // try with framebuffer
     RenderTexture2D texture_buffer = LoadRenderTexture(GetScreenWidth(), GetScreenHeight());
@@ -377,23 +345,102 @@ int main(void) {
     // Note(mike): we draw to texture first, then we render the texture to the screen
     BeginTextureMode(texture_buffer);
 
-    // TODO(mike): handle rotation
-    // top left
-    DrawTexture(texture,
-        GetScreenWidth() / 2 - TILE_PIXELS_X,GetScreenHeight() / 2 - TILE_PIXELS_Y,
-        WHITE);
-    // bottom left
-    DrawTexture(texture2,
-        GetScreenWidth() / 2 - TILE_PIXELS_X,GetScreenHeight() / 2,
-        WHITE);
-    // top right
-    DrawTexture(texture3,
-        GetScreenWidth() / 2,GetScreenHeight() / 2 - TILE_PIXELS_Y,
-        WHITE);
-    // bottom right
-    DrawTexture(texture4,
-    GetScreenWidth() / 2,GetScreenHeight() / 2,
-        WHITE);
+    // TODO(mike): implement zoom level 10 for movement. limit it to a certain amount of tiles
+
+    // TODO(mike): we'll need to use async stuff later but for lower zoom levels blocking will be fine
+    curl_easy_setopt(curl_handle, CURLOPT_FOLLOWLOCATION, 1L);
+    curl_easy_setopt(curl_handle, CURLOPT_WRITEFUNCTION, CURLWriteMemoryCallback);
+    curl_easy_setopt(curl_handle, CURLOPT_WRITEDATA, (void *)&buffer);
+    curl_easy_setopt(curl_handle, CURLOPT_USERAGENT, "libcurl-agent/1.0");
+
+    // TODO(mike): load all ~million tiles for zoom level 10 just to test movement and rendering
+    int zoom_level = 10;
+    int total_tiles_per_axis = 1 << zoom_level;
+    char url_buffer[1024] = {};
+
+    TextureSOA texture_soa = TextureSOA_create(TILES_X * TILES_Y);
+
+    size_t texture_idx = 0;
+    int texture_y = 0;
+    for (int y = 360; y < 370; ++y) {
+        int texture_x = 0;
+        for (int x = 535; x < 545; ++x) {
+            //snprintf(url_buffer, sizeof url_buffer, "https://tile.openstreetmap.org/%d/%d/%d.png", zoom_level, x, y);
+            snprintf(url_buffer, sizeof url_buffer, TILES_URL_TEMPLATE, zoom_level, x, y);
+            curl_easy_setopt(curl_handle, CURLOPT_URL, url_buffer);
+
+            res = curl_easy_perform(curl_handle);
+            if(res != CURLE_OK) {
+                fprintf(stderr, "error: %s\n", curl_easy_strerror(res));
+                return 1;
+            }
+
+            AssetAllocation data = aa_allocate_asset(&asset_allocator, buffer.len);
+            memcpy(asset_allocator.allocators[data.idx_allocator].memory + data.offset, buffer.memory, buffer.len);
+            scratch_buffer_reset(&buffer);
+
+            texture_soa.idx_allocators[texture_idx] = data.idx_allocator;
+            texture_soa.offsets[texture_idx] = data.offset;
+            texture_soa.sizes[texture_idx] = data.size;
+            // TODO(mike): separate tile acquisition from loading textures, maybe?
+
+
+            const unsigned char *memory = (const unsigned char *) asset_allocator.allocators[data.idx_allocator].memory + data.offset;
+            texture_soa.images[texture_idx] = LoadImageFromMemory(".png", memory, (int) data.size);
+            texture_soa.textures[texture_idx] = LoadTextureFromImage(texture_soa.images[texture_idx]);
+
+            // DrawTexture(
+            //     texture_soa.textures[texture_idx],
+            //     texture_x * TILE_PIXELS_X,
+            //     texture_y * TILE_PIXELS_Y,
+            //     RAYWHITE
+            //     );
+
+            DrawTexturePro(
+                texture_soa.textures[texture_idx],
+                (Rectangle){
+                    0, 0,
+                    (float)TILE_PIXELS_X,
+                    (float)-TILE_PIXELS_Y },
+                (Rectangle){
+                    texture_x * TILE_PIXELS_X,
+                    texture_y * TILE_PIXELS_Y,
+                    (float) TILE_PIXELS_X,
+                    (float) TILE_PIXELS_Y
+                },
+                (Vector2){ 0, 0 },
+            0,
+                WHITE
+            );
+
+
+
+            texture_x++;
+            texture_idx++;
+        }
+        texture_y++;
+    }
+
+
+
+    //
+    // // TODO(mike): handle rotation
+    // // top left
+    // DrawTexture(texture,
+    //     GetScreenWidth() / 2 - TILE_PIXELS_X,GetScreenHeight() / 2 - TILE_PIXELS_Y,
+    //     WHITE);
+    // // bottom left
+    // DrawTexture(texture2,
+    //     GetScreenWidth() / 2 - TILE_PIXELS_X,GetScreenHeight() / 2,
+    //     WHITE);
+    // // top right
+    // DrawTexture(texture3,
+    //     GetScreenWidth() / 2,GetScreenHeight() / 2 - TILE_PIXELS_Y,
+    //     WHITE);
+    // // bottom right
+    // DrawTexture(texture4,
+    // GetScreenWidth() / 2,GetScreenHeight() / 2,
+    //     WHITE);
 
     EndTextureMode();
 
@@ -426,7 +473,7 @@ int main(void) {
         center_x += speed_x;
         center_y += speed_y;
 
-        total_tiles_per_axis = 2 << zoom_level;
+        // total_tiles_per_axis = 2 << zoom_level;
 
         ////////////////////////////////////////
         /// drawing
@@ -444,21 +491,36 @@ int main(void) {
         //WHITE
         //);
 
+        // DrawTextureRec(
+        //     texture_buffer.texture,
+        //     (Rectangle) {
+        //         GetScreenWidth() / 2 - TILE_PIXELS_X + center_x,
+        //         GetScreenHeight() / 2 - TILE_PIXELS_Y + center_y,
+        //         TILE_PIXELS_X,
+        //         TILE_PIXELS_Y
+        //     },
+        //     (Vector2) {
+        //         GetScreenWidth() / 2 - TILE_PIXELS_X /2,
+        //         GetScreenHeight() / 2 - TILE_PIXELS_Y /2,
+        //     },
+        //     RAYWHITE
+        //     );
+
+
+
         DrawTextureRec(
             texture_buffer.texture,
             (Rectangle) {
-                GetScreenWidth() / 2 - TILE_PIXELS_X + center_x,
-                GetScreenHeight() / 2 - TILE_PIXELS_Y + center_y,
-                TILE_PIXELS_X,
-                TILE_PIXELS_Y
+                4 * TILE_PIXELS_X + center_x,
+                4 * TILE_PIXELS_Y + center_y,
+                GetScreenWidth(),
+                GetScreenHeight(),
             },
             (Vector2) {
-                GetScreenWidth() / 2 - texture.width /2,
-                GetScreenHeight() / 2 - texture.height /2,
+                0,0
             },
-            RAYWHITE
+            WHITE
             );
-
 
 
         // horizontal middle line
