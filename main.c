@@ -340,7 +340,7 @@ int main(void) {
     SetTargetFPS(60);
 
     // try with framebuffer
-    RenderTexture2D texture_buffer = LoadRenderTexture(GetScreenWidth(), GetScreenHeight());
+    RenderTexture2D texture_buffer = LoadRenderTexture(TILE_PIXELS_X * TILES_X, TILE_PIXELS_Y * TILES_Y);
 
     // Note(mike): we draw to texture first, then we render the texture to the screen
     BeginTextureMode(texture_buffer);
@@ -396,6 +396,7 @@ int main(void) {
             //     RAYWHITE
             //     );
 
+            // TODO(mike): there's still a major bug here. X Tiles are repeating indefinitely and don't match to 10 tiles
             DrawTexturePro(
                 texture_soa.textures[texture_idx],
                 (Rectangle){
@@ -404,7 +405,7 @@ int main(void) {
                     (float)-TILE_PIXELS_Y },
                 (Rectangle){
                     texture_x * TILE_PIXELS_X,
-                    texture_y * TILE_PIXELS_Y,
+                     TILE_PIXELS_Y * TILES_Y - texture_y * TILE_PIXELS_Y,
                     (float) TILE_PIXELS_X,
                     (float) TILE_PIXELS_Y
                 },
