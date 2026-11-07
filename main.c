@@ -30,8 +30,8 @@
 // Note(mike): we assume 4 bytes TODO(mike): this might need to be flexible in the future
 #define BYTES_PER_PIXEL 4
 
-#define CURSOR_SPEED_X 100
-#define CURSOR_SPEED_Y 100
+#define CURSOR_SPEED_X 300
+#define CURSOR_SPEED_Y 300
 
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -76,6 +76,7 @@ gis_visible_tiles(double center_x, double center_y, int viewport_width, int view
 #define LARGE_SLAB_SIZE 20480 // 20KiB
 
 // TODO(mike): free list
+// TODO(mike): use generations for free lists and to verify if an allocation is still valid
 typedef struct {
     char *memory;
     const size_t slab_size;
@@ -396,7 +397,6 @@ int main(void) {
             //     RAYWHITE
             //     );
 
-            // TODO(mike): there's still a major bug here. X Tiles are repeating indefinitely and don't match to 10 tiles
             DrawTexturePro(
                 texture_soa.textures[texture_idx],
                 (Rectangle){
@@ -413,8 +413,6 @@ int main(void) {
             0,
                 WHITE
             );
-
-
 
             texture_x++;
             texture_idx++;
@@ -509,6 +507,8 @@ int main(void) {
 
 
 
+        // TODO(mike): there is still texture bleed at the edges
+        SetTextureWrap(texture_buffer.texture, TEXTURE_WRAP_CLAMP);
         DrawTextureRec(
             texture_buffer.texture,
             (Rectangle) {
@@ -551,6 +551,7 @@ int main(void) {
             );
 
         /// draw vertical and horizontal line around tiles
+        /// TODO(mike): draw the lines around the actual tiles
 
         // center to left
         for (int x = GetScreenWidth() / 2 - TILE_PIXELS_X; x > 0; x -= TILE_PIXELS_X) {
