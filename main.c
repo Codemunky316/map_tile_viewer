@@ -390,12 +390,6 @@ int main(void) {
             texture_soa.images[texture_idx] = LoadImageFromMemory(".png", memory, (int) data.size);
             texture_soa.textures[texture_idx] = LoadTextureFromImage(texture_soa.images[texture_idx]);
 
-            // DrawTexture(
-            //     texture_soa.textures[texture_idx],
-            //     texture_x * TILE_PIXELS_X,
-            //     texture_y * TILE_PIXELS_Y,
-            //     RAYWHITE
-            //     );
 
             DrawTexturePro(
                 texture_soa.textures[texture_idx],
@@ -413,6 +407,14 @@ int main(void) {
             0,
                 WHITE
             );
+
+            DrawRectangleLines(
+                    texture_x * TILE_PIXELS_X,
+                     TILE_PIXELS_Y * TILES_Y - texture_y * TILE_PIXELS_Y,
+                    (float) TILE_PIXELS_X,
+                    (float) TILE_PIXELS_Y,
+                    BLACK
+                );
 
             texture_x++;
             texture_idx++;
@@ -549,51 +551,6 @@ int main(void) {
             5.0f,
             BLACK
             );
-
-        /// draw vertical and horizontal line around tiles
-        /// TODO(mike): draw the lines around the actual tiles
-
-        // center to left
-        for (int x = GetScreenWidth() / 2 - TILE_PIXELS_X; x > 0; x -= TILE_PIXELS_X) {
-            DrawLine(
-                x,
-                0,
-                x,
-                GetScreenHeight(),
-                BLACK
-                );
-        }
-        // center to right
-        for (int x = GetScreenWidth() / 2 + TILE_PIXELS_X; x < GetScreenWidth(); x += TILE_PIXELS_X) {
-            DrawLine(
-                x,
-                0,
-                x,
-                GetScreenHeight(),
-                BLACK
-                );
-        }
-
-        // center up
-        for (int y = GetScreenHeight() / 2 - TILE_PIXELS_Y; y > 0; y -= TILE_PIXELS_Y) {
-            DrawLine(
-                0,
-                y,
-                GetScreenWidth(),
-                y,
-                BLACK);
-        }
-
-        // center down
-        for (int y = GetScreenHeight() / 2 + TILE_PIXELS_Y; y < GetScreenHeight(); y += TILE_PIXELS_Y) {
-            DrawLine(
-                0,
-                y,
-                GetScreenWidth(),
-                y,
-                BLACK);
-        }
-
 
         EndDrawing();
     }
