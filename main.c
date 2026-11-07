@@ -509,8 +509,8 @@ int main(void) {
 
 
 
-        // TODO(mike): there is still texture bleed at the edges
-        SetTextureWrap(texture_buffer.texture, TEXTURE_WRAP_CLAMP);
+        // TODO(mike): y axis does not repeat neatly, there is a bit of background gap
+        SetTextureWrap(texture_buffer.texture, TEXTURE_WRAP_REPEAT);
         DrawTextureRec(
             texture_buffer.texture,
             (Rectangle) {
